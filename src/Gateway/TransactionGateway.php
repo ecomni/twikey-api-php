@@ -14,9 +14,9 @@ class TransactionGateway extends BaseGateway
      * @throws ClientExceptionInterface
      * @throws TwikeyException
      */
-    public function create($data)
+    public function create($data, ?array $optionalHeaders = [])
     {
-        $response = $this->request('POST', "/creditor/transaction", ['form_params' => $data]);
+        $response = $this->request('POST', "/creditor/transaction", ['form_params' => $data, 'headers' => $optionalHeaders]);
         $server_output = $this->checkResponse($response, "Creating a new transaction!");
         return json_decode($server_output);
     }
@@ -44,11 +44,21 @@ class TransactionGateway extends BaseGateway
      * @throws TwikeyException
      * @throws ClientExceptionInterface
      */
-    public function feed(TransactionCallback $callback):int
+    public function feed(TransactionCallback $callback, $includes = ["seq"], $start_position=""):int
     {
+        $url = "/creditor/transaction?";
+        foreach ($includes as $include) {
+            $url .= "include=".$include."&";
+        }
         $count = 0;
+        $optionalHeaders = [];
+        if ($start_position != "") {
+            $optionalHeaders["X-RESUME-AFTER"] = $start_position;
+        }
         do {
-            $response = $this->request('GET', "/creditor/transaction", []);
+            $response = $this->request('GET', $url, ['headers' => $optionalHeaders]);
+            // reset to avoid loop
+            $optionalHeaders = [];
             $server_output = $this->checkResponse($response, "Retrieving transaction feed!");
             $transactions = json_decode($server_output);
             foreach ($transactions->Entries as $tx){
@@ -58,17 +68,6 @@ class TransactionGateway extends BaseGateway
         }
         while(count($transactions->Entries) > 0);
         return $count;
-    }
-
-    /**
-     * @throws TwikeyException
-     * @throws ClientExceptionInterface
-     */
-    public function collect(int $ct)
-    {
-        $response = $this->request('POST', "/creditor/collect", ['form_params' => ["ct" => $ct]]);
-        $server_output = $this->checkResponse($response, "Retrieving transaction feed!");
-        return json_decode($server_output);
     }
 
     /**
@@ -85,4 +84,15 @@ class TransactionGateway extends BaseGateway
         return json_decode($server_output);
     }
 
+    /**
+     * @throws TwikeyException
+     * @throws ClientExceptionInterface
+     * @deprecated Please use the collection gateway
+     */
+    public function collect(int $ct)
+    {
+        $response = $this->request('POST', "/creditor/collect", ['form_params' => ["ct" => $ct]]);
+        $server_output = $this->checkResponse($response, "Retrieving transaction feed!");
+        return json_decode($server_output);
+    }
 }

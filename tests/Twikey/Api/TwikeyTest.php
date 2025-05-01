@@ -5,8 +5,10 @@ namespace Twikey\Api;
 use GuzzleHttp\Client;
 use GuzzleHttp\ClientInterface;
 use InvalidArgumentException;
+use PHPUnit\Framework\Assert;
 use PHPUnit\Framework\TestCase;
 use Twikey\Api\Callback\DocumentCallback;
+use Twikey\Api\Callback\InvoiceCallback;
 use Twikey\Api\Callback\PaylinkCallback;
 use Twikey\Api\Callback\TransactionCallback;
 
@@ -14,7 +16,7 @@ class TwikeyTest extends TestCase
 {
     private static string $APIKEY;
     private static string $CT;
-    private static ClientInterface $httpClient;
+    private static ClientInterface $http_client;
 
     /**
      * @before
@@ -28,13 +30,13 @@ class TwikeyTest extends TestCase
         }
         if (getenv('CT') == "") {
             $this->markTestSkipped(
-                'The CT (template) is not available.'
+                'The CT (Profile to use) is not available.'
             );
         }
 
         self::$APIKEY = getenv('TWIKEY_API_KEY');
         self::$CT = getenv('CT');
-        self::$httpClient = new Client([
+        self::$http_client = new Client([
             'http_errors' => false,
             'debug' => false
         ]);
@@ -46,9 +48,9 @@ class TwikeyTest extends TestCase
         if (!self::$APIKEY)
             throw new InvalidArgumentException('Invalid apikey');
 
-        $twikey = new Twikey(self::$httpClient,self::$APIKEY,true);
+        $twikey = new Twikey(self::$http_client,self::$APIKEY,"https://api.beta.twikey.com","sdk-php-test/".Twikey::VERSION);
         $data = array(
-            "ct" => self::$CT, // see Settings > Template
+            "ct" => self::$CT, // see Settings > Profile to use
             "email" => "john@doe.com",
             "firstname" => "John",
             "lastname" => "Doe",
@@ -57,14 +59,14 @@ class TwikeyTest extends TestCase
             "city" => "Liverpool",
             "zip" => "1526",
             "country" => "BE",
-            "mobile" => "",
-            "companyName" => "",
-            "form" => "",
-            "vatno" => "",
-            "iban" => "",
-            "bic" => "",
-            "mandateNumber" => "",
-            "contractNumber" => "",
+            "mobile" => "", // Optional
+            "companyName" => "", // Optional
+            "form" => "", // Optional
+            "vatno" => "", // Optional
+            "iban" => "", // Optional
+            "bic" => "", // Optional
+            "mandateNumber" => "", // Optional
+            "contractNumber" => "", // Optional
         );
 
         $contract = $twikey->document->create($data);
@@ -72,7 +74,18 @@ class TwikeyTest extends TestCase
         $this->assertIsString($contract->mndtId);
         $this->assertIsString($contract->key);
 
-        $twikey->document->feed(new SampleDocumentCallback());
+        $twikey->document->feed(new SampleDocumentCallback(), ["id","mandate","person","cancelled_mandate"]);
+
+        // Get the customer link
+        if (getenv('MNDTNUMBER') == "") {
+            $this->markTestSkipped(
+                'The mndtNumber is not available.'
+            );
+        }
+        $customerAccess = $twikey->document->customeraccess(getenv('MNDTNUMBER'));
+        $this->assertIsString($customerAccess->url);
+
+        $twikey->document->getPdf(getenv('MNDTNUMBER'));
 
         // Remove the document again
         $twikey->document->cancel($contract->mndtId, "cancel");
@@ -83,18 +96,15 @@ class TwikeyTest extends TestCase
         if (!self::$APIKEY)
             throw new InvalidArgumentException('Invalid apikey');
 
-        if (!self::$APIKEY)
-            throw new InvalidArgumentException('Invalid apikey');
-
-        if (getenv('mndtNumber') == "") {
+        if (getenv('MNDTNUMBER') == "") {
             $this->markTestSkipped(
                 'The mndtNumber is not available.'
             );
         }
 
-        $twikey = new Twikey(self::$httpClient,self::$APIKEY,true);
+        $twikey = new Twikey(self::$http_client,self::$APIKEY,"https://api.beta.twikey.com","sdk-php-test/".Twikey::VERSION);
         $data = array(
-            "mndtId" => getenv('mndtNumber'),
+            "mndtId" => getenv('MNDTNUMBER'),
             "message" => "Test Message",
             "ref" => "Merchant Reference",
             "amount" => 10.00, // 10 euro
@@ -107,16 +117,47 @@ class TwikeyTest extends TestCase
         $this->assertNotEmpty($tx->Entries[0]->date);
     }
 
+    public function testSubscription()
+    {
+        if (!self::$APIKEY)
+            throw new InvalidArgumentException('Invalid apikey');
+
+        if (getenv('MNDTNUMBER') == "") {
+            $this->markTestSkipped(
+                'The mndtNumber is not available.'
+            );
+        }
+
+        $twikey = new Twikey(self::$http_client,self::$APIKEY,"https://api.beta.twikey.com","sdk-php-test/".Twikey::VERSION);
+        $data = array(
+            "mndtId" => getenv('MNDTNUMBER'),
+            "message" => "Message to customer",
+            "ref" => "PhpTestRef",
+            "amount" => 10.00, // 10 euro
+            "recurrence" => "1m", // every month
+            "start" => "2030-01-01"
+        );
+        $subscription = $twikey->subscription->create($data);
+        $this->assertIsNumeric($subscription->id);
+        $this->assertIsNumeric($subscription->amount);
+        $this->assertNotEmpty($subscription->message);
+        $this->assertNotEmpty($subscription->ref);
+        $this->assertEquals("2030-01-01", $subscription->start);
+        $twikey->subscription->cancel(getenv('MNDTNUMBER'), $subscription->ref);
+    }
+
     public function testTransactionFeed()
     {
         if (!self::$APIKEY)
             throw new InvalidArgumentException('Invalid apikey');
 
-        $twikey = new Twikey(self::$httpClient,self::$APIKEY,true);
+        $twikey = new Twikey(self::$http_client,self::$APIKEY,"https://api.beta.twikey.com","sdk-php-test/".Twikey::VERSION);
         $count = $twikey->transaction->feed(new class implements TransactionCallback{
             public function handle($transaction)
             {
-                print("Transaction " . $transaction->id . ' @ '. $transaction->date . ' has '. $transaction->state . "\n");
+                Assert::assertIsInt($transaction->id);
+                Assert::assertIsString($transaction->date);
+                Assert::assertIsString($transaction->state);
             }
         });
         $this->assertIsNumeric($count);
@@ -127,11 +168,23 @@ class TwikeyTest extends TestCase
         if (!self::$APIKEY)
             throw new InvalidArgumentException('Invalid apikey');
 
-        $twikey = new Twikey(self::$httpClient,self::$APIKEY,true);
+        $twikey = new Twikey(self::$http_client,self::$APIKEY,"https://api.beta.twikey.com","sdk-php-test/".Twikey::VERSION);
+        $link = $twikey->link->create([
+            "email" => "no-reply@twikey.com",
+            "message" => "Payment last month",
+            "amount" => "100",
+        ]);
+
+        $this->assertIsNumeric($link->id);
+        $twikey->link->get($link->id);
+        $twikey->link->remove($link->id);
+
         $count = $twikey->link->feed(new class implements PaylinkCallback {
             public function handle($link)
             {
-                printf("Link %s for %.2f Euro has state %s\n", $link->id, $link->amount, $link->state);
+                Assert::assertIsInt($link->id);
+                Assert::assertIsFloat($link->amount);
+                Assert::assertIsString($link->state);
             }
         });
         $this->assertIsNumeric($count);
@@ -151,9 +204,59 @@ class TwikeyTest extends TestCase
 
         $this->assertTrue(Twikey::validateSignature($websiteKey, $doc, $status, "", $signatureInOutcome));
     }
+
+    public function testCreateInvoice()
+    {
+        if (!self::$APIKEY)
+            throw new InvalidArgumentException('Invalid apikey');
+
+        $twikey = new Twikey(self::$http_client,self::$APIKEY,"https://api.beta.twikey.com","sdk-php-test/".Twikey::VERSION);
+        $customer = array(
+            "email" => "john@doe.com",
+            "firstname" => "John",
+            "lastname" => "Doe",
+            "l" => "en",
+            "address" => "Abbey road",
+            "city" => "Liverpool",
+            "zip" => "1526",
+            "country" => "BE",
+            "mobile" => "",
+            "companyName" => "",
+        );
+        $invoicedate = date("Y-m-d");
+        $duedate = date("Y-m-d", time() + 30*24*3600);
+        $invoice = array(
+            "number" => "INVOICE-123",
+            "title" => "Invoice March",
+            "remittance" => "123456789123",
+            "ct" => self::$CT, // see Settings > Profile to use
+            "amount" => 100,
+            "date" => $invoicedate,
+            "duedate" => $duedate,
+            "customer" => $customer,
+        );
+
+        $invoice = $twikey->invoice->create(json_encode($invoice,JSON_FORCE_OBJECT));
+        $this->assertIsString($invoice->url);
+        $this->assertIsString($invoice->id);
+
+        $invoice = $twikey->invoice->get($invoice->id);
+        $this->assertIsString($invoice->url);
+        $this->assertIsString($invoice->id);
+
+        $twikey->invoice->feed(new SampleInvoiceCallback(), [], "3091701");
+
+    }
+
 }
 
 class SampleDocumentCallback implements DocumentCallback {
+
+    public function start($position, $number_of_updates)
+    {
+        Assert::assertIsString($position);
+        Assert::assertIsInt($number_of_updates);
+    }
 
     function handleNew($mandate,$evtTime)
     {
@@ -161,8 +264,8 @@ class SampleDocumentCallback implements DocumentCallback {
         foreach($mandate->SplmtryData as $attribute){
             $kv[$attribute->Key] = $attribute->Value;
         }
-
-        print("New " . $mandate->MndtId . ' @ '. $evtTime . "\n");
+        Assert::assertIsString($mandate->MndtId);
+        Assert::assertIsString($evtTime);
     }
 
     function handleUpdate($originalMandateNumber,$mandate,$reason,$evtTime)
@@ -185,12 +288,35 @@ class SampleDocumentCallback implements DocumentCallback {
                 # code...
                 break;
         }
-        print("Update: " . $mandate->MndtId . ' -> '. $rsn . ' @ '. $evtTime . "\n");
+        Assert::assertIsString($mandate->MndtId);
+        Assert::assertIsString($rsn);
+        Assert::assertIsString($evtTime);
     }
 
-    function handleCancel($mandateNumber,$reason,$evtTime)
+    function handleCancel($mandateNumber, $mandate, $reason, $evtTime)
     {
         $rsn = $reason->Rsn;
-        print("Cancel: " . $mandateNumber . ' -> '. $rsn . ' @ '. $evtTime . "\n");
+        Assert::assertIsString($mandateNumber);
+        Assert::assertIsString($rsn);
+        if($mandate){ // requires the cancelled_mandate include
+            Assert::assertIsString($mandate->MndtId);
+        }
+        Assert::assertIsString($evtTime);
+    }
+}
+
+class SampleInvoiceCallback implements InvoiceCallback {
+
+    public function start($position, $number_of_updates)
+    {
+        Assert::assertIsString($position);
+        Assert::assertIsInt($number_of_updates);
+    }
+
+    public function handle($invoice)
+    {
+        Assert::assertIsObject($invoice);
+        Assert::assertIsString($invoice->number);
+        Assert::assertIsString($invoice->state);
     }
 }
